@@ -7,7 +7,7 @@ const path = require('path');
 const authRoutes = require('./routes/authRoutes');
 const conversationRoutes = require('./routes/conversationRoutes');
 const messageRoutes = require('./routes/messageRoutes'); // ADD THIS
-
+const userRoutes = require('./routes/userRoutes');
 const app = express();
 
 // Middleware
@@ -22,7 +22,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes); // ADD THIS
-
+app.use('/api/users', userRoutes); 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
