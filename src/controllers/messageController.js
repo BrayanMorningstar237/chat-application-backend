@@ -134,7 +134,52 @@ class MessageController {
       });
     }
   }
-  
+  // Mark messages as read in a conversation
+async markMessagesAsRead(req, res) {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+
+    console.log('Marking messages as read for:', conversationId, 'user:', userId);
+
+    // Update all unread messages where user is not the sender
+    const result = await Message.updateMany(
+      {
+        conversationId: conversationId,
+        senderId: { $ne: userId },
+        isRead: false
+      },
+      {
+        $set: { isRead: true },
+        $addToSet: { readBy: userId }
+      }
+    );
+
+    console.log('Marked as read:', result.modifiedCount, 'messages');
+
+    // Emit socket event
+    if (req.io) {
+      req.io.to(conversationId).emit('messages_read', {
+        conversationId,
+        userId,
+        readAt: new Date()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} messages marked as read`,
+      data: { modifiedCount: result.modifiedCount }
+    });
+
+  } catch (error) {
+    console.error('Mark messages as read error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
   // Delete message (soft delete with BR3)
   async deleteMessage(req, res) {
     const session = await Message.startSession();
