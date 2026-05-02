@@ -42,8 +42,19 @@ const conversationSchema = new mongoose.Schema({
     createdAt: Date
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  autoIndex: false
 });
+
+// Create the correct index for direct conversations
+conversationSchema.index(
+  { type: 1, 'participants.userId': 1 },
+  { 
+    unique: true,
+    partialFilterExpression: { type: 'direct' },
+    name: 'type_1_participants_userId_1_direct'
+  }
+);
 
 // Method to add participant
 conversationSchema.methods.addParticipant = async function(userId) {

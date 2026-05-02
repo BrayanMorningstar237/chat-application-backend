@@ -14,9 +14,9 @@ class MessageController {
       const { conversationId, content, type, replyTo } = req.body;
       const senderId = req.user.id;
       
-      console.log('Sending message:', { conversationId, content, senderId }); // DEBUG
+      console.log('Sending message:', { conversationId, content, senderId });
       
-      // BR8: Message size limit (5MB)
+      // Message size limit (5KB - reasonable for chat)
       if (content && content.length > 5000) {
         throw new Error('Message exceeds 5000 character limit');
       }
@@ -42,7 +42,8 @@ class MessageController {
         content,
         type: type || 'text',
         replyTo: replyTo || null,
-        status: 'sent'
+        status: 'sent',
+        isRead: false
       });
       
       await message.save({ session });
@@ -55,12 +56,14 @@ class MessageController {
       
       await session.commitTransaction();
       
-      // COMMENT OUT FOR NOW - Fix later
-      // if (req.io) {
-      //   req.io.to(conversationId).emit('new_message', message);
-      // }
+      // Emit socket event for real-time
+      if (req.io) {
+        const populatedMessage = await Message.findById(message._id)
+          .populate('senderId', 'username avatar');
+        req.io.to(conversationId).emit('new_message', populatedMessage);
+      }
       
-      console.log('Message sent successfully:', message._id); // DEBUG
+      console.log('Message sent successfully:', message._id);
       
       res.status(201).json({
         success: true,
@@ -70,7 +73,7 @@ class MessageController {
       
     } catch (error) {
       await session.abortTransaction();
-      console.error('Send message error:', error); // DEBUG
+      console.error('Send message error:', error);
       res.status(400).json({
         success: false,
         error: error.message
@@ -86,9 +89,9 @@ class MessageController {
       const { conversationId } = req.params;
       const { limit = 50, before } = req.query;
       
-      console.log('Getting messages for:', conversationId); // DEBUG
+      console.log('Getting messages for:', conversationId);
       
-      // BR3: Users can only see their own conversations
+      // Users can only see their own conversations
       const conversation = await Conversation.findById(conversationId);
       if (!conversation) {
         return res.status(404).json({
@@ -127,60 +130,75 @@ class MessageController {
       });
       
     } catch (error) {
-      console.error('Get messages error:', error); // DEBUG
+      console.error('Get messages error:', error);
       res.status(500).json({
         success: false,
         error: error.message
       });
     }
   }
+  
   // Mark messages as read in a conversation
-async markMessagesAsRead(req, res) {
-  try {
-    const { conversationId } = req.params;
-    const userId = req.user.id;
+  async markMessagesAsRead(req, res) {
+    try {
+      const { conversationId } = req.params;
+      const userId = req.user.id;
 
-    console.log('Marking messages as read for:', conversationId, 'user:', userId);
+      console.log('Marking messages as read for:', conversationId, 'user:', userId);
 
-    // Update all unread messages where user is not the sender
-    const result = await Message.updateMany(
-      {
-        conversationId: conversationId,
-        senderId: { $ne: userId },
-        isRead: false
-      },
-      {
-        $set: { isRead: true },
-        $addToSet: { readBy: userId }
+      // Update all unread messages where user is not the sender
+      const result = await Message.updateMany(
+        {
+          conversationId: conversationId,
+          senderId: { $ne: userId },
+          isRead: false
+        },
+        {
+          $set: { isRead: true },
+          $addToSet: { readBy: userId }
+        }
+      );
+
+      console.log('Marked as read:', result.modifiedCount, 'messages');
+
+      // Emit socket event to update unread count in real-time
+      if (req.io) {
+        req.io.to(conversationId).emit('messages_read', {
+          conversationId,
+          userId,
+          readAt: new Date()
+        });
+        
+        // Emit unread count update to all participants
+        const unreadCount = await Message.countDocuments({
+          conversationId: conversationId,
+          senderId: { $ne: userId },
+          isRead: false
+        });
+        
+        req.io.to(conversationId).emit('unread_count_update', {
+          conversationId,
+          userId,
+          unreadCount
+        });
       }
-    );
 
-    console.log('Marked as read:', result.modifiedCount, 'messages');
+      res.json({
+        success: true,
+        message: `${result.modifiedCount} messages marked as read`,
+        data: { modifiedCount: result.modifiedCount }
+      });
 
-    // Emit socket event
-    if (req.io) {
-      req.io.to(conversationId).emit('messages_read', {
-        conversationId,
-        userId,
-        readAt: new Date()
+    } catch (error) {
+      console.error('Mark messages as read error:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
       });
     }
-
-    res.json({
-      success: true,
-      message: `${result.modifiedCount} messages marked as read`,
-      data: { modifiedCount: result.modifiedCount }
-    });
-
-  } catch (error) {
-    console.error('Mark messages as read error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
   }
-}
-  // Delete message (soft delete with BR3)
+  
+  // Delete message (soft delete)
   async deleteMessage(req, res) {
     const session = await Message.startSession();
     session.startTransaction();
@@ -190,8 +208,7 @@ async markMessagesAsRead(req, res) {
       const userId = req.user.id;
       const isAdmin = req.user.isAdmin;
       
-      const message = await Message.findById(messageId)
-        .populate('conversationId');
+      const message = await Message.findById(messageId);
       
       if (!message) {
         throw new Error('Message not found');
@@ -200,7 +217,7 @@ async markMessagesAsRead(req, res) {
       const messageAge = Date.now() - new Date(message.createdAt).getTime();
       const hoursOld = messageAge / (1000 * 60 * 60);
       
-      // BR3: Regular users cannot delete messages older than 24 hours
+      // Regular users cannot delete messages older than 24 hours
       if (!isAdmin && hoursOld > 24) {
         throw new Error('Cannot delete messages older than 24 hours');
       }
