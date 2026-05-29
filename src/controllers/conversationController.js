@@ -183,7 +183,8 @@ const getUserConversations = async (req, res) => {
       const unreadCount = await Message.countDocuments({
         conversationId: conv._id,
         senderId: { $ne: userId },
-        isRead: false
+        isDeleted: false,
+        'readBy.userId': { $ne: userId }
       });
       
       // Convert to plain object and add unreadCount
@@ -232,7 +233,8 @@ const getConversationById = async (req, res) => {
     const unreadCount = await Message.countDocuments({
       conversationId: conversation._id,
       senderId: { $ne: userId },
-      isRead: false
+      isDeleted: false,
+      'readBy.userId': { $ne: userId }
     });
     
     const convObj = conversation.toObject();

@@ -4,86 +4,90 @@ const Conversation = require('../models/Conversation');
 
 module.exports = (io) => {
   io.on('connection', (socket) => {
-    console.log(`🟢 New client connected: ${socket.id}`);
-    
-    // User joins a conversation room
-    socket.on('join_conversation', (conversationId) => {
+    console.log(`New client connected: ${socket.id}`);
+
+    const joinConversation = (conversationId) => {
       socket.join(conversationId);
-      console.log(`📢 User ${socket.id} joined conversation: ${conversationId}`);
-    });
-    
-    // User leaves a conversation room
-    socket.on('leave_conversation', (conversationId) => {
+      console.log(`User ${socket.id} joined conversation: ${conversationId}`);
+    };
+
+    const leaveConversation = (conversationId) => {
       socket.leave(conversationId);
-      console.log(`📢 User ${socket.id} left conversation: ${conversationId}`);
-    });
-    
-    // Handle sending messages
+      console.log(`User ${socket.id} left conversation: ${conversationId}`);
+    };
+
+    socket.on('join_conversation', joinConversation);
+    socket.on('joinConversation', joinConversation);
+    socket.on('leave_conversation', leaveConversation);
+    socket.on('leaveConversation', leaveConversation);
+
     socket.on('send_message', async (data) => {
       try {
-        const { conversationId, content, senderId, type = 'text' } = data;
-        
-        // Save message to database
+        const { conversationId, content = '', senderId, type = 'text', attachments = [] } = data;
+
         const message = new Message({
           conversationId,
           senderId,
           content,
           type,
-          status: 'sent'
+          attachments,
+          status: 'sent',
+          isRead: false,
+          isDelivered: false,
+          readBy: [{ userId: senderId, readAt: new Date() }]
         });
-        
+
         await message.save();
-        
-        // Update conversation's last message
+
         await Conversation.findByIdAndUpdate(conversationId, {
-          lastMessage: content.substring(0, 100),
+          lastMessage: type === 'image' ? 'Photo' : content.substring(0, 100),
           lastMessageAt: new Date(),
           lastMessageSender: senderId
         });
-        
-        // Populate sender info
+
         await message.populate('senderId', 'username avatar');
-        
-        // Emit to all users in the conversation room
+
         io.to(conversationId).emit('receive_message', {
           ...message.toObject(),
           formattedTime: message.formattedTime
         });
-        
-        console.log(`💬 Message sent to conversation ${conversationId}`);
-        
+        io.to(conversationId).emit('new_message', message);
+        io.to(conversationId).emit('newMessage', message);
+
+        console.log(`Message sent to conversation ${conversationId}`);
       } catch (error) {
-        console.error(`❌ Error sending message: ${error.message}`);
+        console.error(`Error sending message: ${error.message}`);
         socket.emit('message_error', { error: error.message });
       }
     });
-    
-    // Handle typing indicator
+
     socket.on('typing_start', ({ conversationId, username }) => {
       socket.to(conversationId).emit('user_typing', { username, isTyping: true });
     });
-    
+
     socket.on('typing_stop', ({ conversationId, username }) => {
       socket.to(conversationId).emit('user_typing', { username, isTyping: false });
     });
-    
-    // Handle message read receipt
+
     socket.on('mark_read', async ({ messageId, conversationId, userId }) => {
       try {
+        const readAt = new Date();
         await Message.findByIdAndUpdate(messageId, {
           status: 'read',
-          readAt: new Date()
+          isRead: true,
+          readAt,
+          $addToSet: { readBy: { userId, readAt } }
         });
-        
-        io.to(conversationId).emit('message_read', { messageId, userId });
+
+        io.to(conversationId).emit('message_read', { messageId, userId, readAt });
+        io.to(conversationId).emit('messageRead', { messageId, userId, readAt });
       } catch (error) {
-        console.error(`❌ Error marking read: ${error.message}`);
+        console.error(`Error marking read: ${error.message}`);
       }
     });
-    
-    // Handle disconnect
+
     socket.on('disconnect', () => {
-      console.log(`🔴 Client disconnected: ${socket.id}`);
+      console.log(`Client disconnected: ${socket.id}`);
     });
   });
 };

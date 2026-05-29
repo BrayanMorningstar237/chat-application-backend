@@ -11,14 +11,19 @@ class MessageController {
     session.startTransaction();
     
     try {
-      const { conversationId, content, type, replyTo } = req.body;
+      const { conversationId, content, type, replyTo, attachments = [] } = req.body;
       const senderId = req.user.id;
+      const messageType = type || 'text';
       
       console.log('Sending message:', { conversationId, content, senderId });
       
       // Message size limit (5KB - reasonable for chat)
       if (content && content.length > 5000) {
         throw new Error('Message exceeds 5000 character limit');
+      }
+
+      if (!content && (!Array.isArray(attachments) || attachments.length === 0)) {
+        throw new Error('Message content or attachment is required');
       }
       
       // Check if user is in conversation
@@ -39,17 +44,20 @@ class MessageController {
       const message = new Message({
         conversationId,
         senderId,
-        content,
-        type: type || 'text',
+        content: content || '',
+        type: messageType,
+        attachments: Array.isArray(attachments) ? attachments : [],
         replyTo: replyTo || null,
         status: 'sent',
-        isRead: false
+        isRead: false,
+        isDelivered: false,
+        readBy: [{ userId: senderId, readAt: new Date() }]
       });
       
       await message.save({ session });
       
       // Update conversation last message
-      conversation.lastMessage = content.substring(0, 100);
+      conversation.lastMessage = messageType === 'image' ? 'Photo' : (content || '').substring(0, 100);
       conversation.lastMessageAt = new Date();
       conversation.lastMessageSender = senderId;
       await conversation.save({ session });
@@ -61,6 +69,7 @@ class MessageController {
         const populatedMessage = await Message.findById(message._id)
           .populate('senderId', 'username avatar');
         req.io.to(conversationId).emit('new_message', populatedMessage);
+        req.io.to(conversationId).emit('newMessage', populatedMessage);
       }
       
       console.log('Message sent successfully:', message._id);
@@ -68,7 +77,7 @@ class MessageController {
       res.status(201).json({
         success: true,
         message: 'Message sent successfully',
-        data: message
+        data: await Message.findById(message._id).populate('senderId', 'username avatar')
       });
       
     } catch (error) {
@@ -146,34 +155,69 @@ class MessageController {
 
       console.log('Marking messages as read for:', conversationId, 'user:', userId);
 
-      // Update all unread messages where user is not the sender
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation) {
+        return res.status(404).json({
+          success: false,
+          error: 'Conversation not found'
+        });
+      }
+
+      const isParticipant = conversation.participants.some(
+        p => p.userId.equals(userId)
+      );
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied to this conversation'
+        });
+      }
+
+      const readAt = new Date();
+      const unreadMessages = await Message.find({
+        conversationId: conversationId,
+        senderId: { $ne: userId },
+        isDeleted: false,
+        'readBy.userId': { $ne: userId }
+      }).select('_id');
+      const messageIds = unreadMessages.map(message => message._id);
+
       const result = await Message.updateMany(
         {
           conversationId: conversationId,
           senderId: { $ne: userId },
-          isRead: false
+          isDeleted: false,
+          'readBy.userId': { $ne: userId }
         },
         {
-          $set: { isRead: true },
-          $addToSet: { readBy: userId }
+          $set: { isRead: true, status: 'read', readAt },
+          $addToSet: { readBy: { userId, readAt } }
         }
       );
 
       console.log('Marked as read:', result.modifiedCount, 'messages');
+
+      await Conversation.updateOne(
+        { _id: conversationId, 'participants.userId': userId },
+        { $set: { 'participants.$.lastReadAt': readAt } }
+      );
 
       // Emit socket event to update unread count in real-time
       if (req.io) {
         req.io.to(conversationId).emit('messages_read', {
           conversationId,
           userId,
-          readAt: new Date()
+          readAt,
+          messageIds
         });
         
         // Emit unread count update to all participants
         const unreadCount = await Message.countDocuments({
           conversationId: conversationId,
           senderId: { $ne: userId },
-          isRead: false
+          isDeleted: false,
+          'readBy.userId': { $ne: userId }
         });
         
         req.io.to(conversationId).emit('unread_count_update', {

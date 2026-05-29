@@ -14,6 +14,10 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  req.io = app.get('io');
+  next();
+});
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

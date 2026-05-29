@@ -30,6 +30,35 @@ const messageSchema = new mongoose.Schema({
     size: Number,
     mimeType: String
   }],
+  isDelivered: {
+    type: Boolean,
+    default: false
+  },
+  deliveredTo: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    deliveredAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  isRead: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  readBy: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    readAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   status: {
     type: String,
     enum: ['sent', 'delivered', 'read', 'failed', 'deleted'],

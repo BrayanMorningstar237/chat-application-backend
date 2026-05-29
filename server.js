@@ -13,12 +13,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },
 });
-
-// Make io accessible to routes via req.io
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
+app.set('io', io);
 
 require("./src/sockets/socket")(io);
 
