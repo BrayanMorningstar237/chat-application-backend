@@ -222,10 +222,18 @@ class MessageController {
         throw new Error('Cannot delete messages older than 24 hours');
       }
       
-      // Check if user is sender or admin
+      // Check if user is sender, global admin, or group admin
       const isSender = message.senderId.equals(userId);
-      
+      let isGroupAdmin = false;
+
       if (!isSender && !isAdmin) {
+        const conversation = await Conversation.findById(message.conversationId);
+        if (conversation && conversation.type === 'group') {
+          isGroupAdmin = conversation.groupInfo?.createdBy?.toString() === userId;
+        }
+      }
+
+      if (!isSender && !isAdmin && !isGroupAdmin) {
         throw new Error('Not authorized to delete this message');
       }
       

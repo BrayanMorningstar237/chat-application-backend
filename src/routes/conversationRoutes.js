@@ -13,6 +13,8 @@ router.use(protect);
 
 // Routes
 router.post('/direct', createDirectConversation);
+router.post('/', createConversation);
+router.put('/:id', updateConversation);
 router.get('/', getUserConversations);
 router.get('/:id', getConversationById);
 

@@ -120,7 +120,11 @@ const login = async (req, res) => {
         email: user.email,
         phoneNumber: user.phoneNumber,
         status: user.status,
-        isAdmin: user.isAdmin
+        avatar: user.avatar,
+        country: user.country,
+        city: user.city,
+        isAdmin: user.isAdmin,
+        isBusinessMode: user.isBusinessMode
       },
       token: generateToken(user._id)
     });
@@ -155,7 +159,7 @@ const getMe = async (req, res) => {
 // Update profile
 const updateProfile = async (req, res) => {
   try {
-    const { phoneNumber, username, city, country, avatar } = req.body;
+    const { phoneNumber, username, city, country, avatar, isBusinessMode } = req.body;
     
     const user = await User.findById(req.user.id);
     
@@ -173,20 +177,24 @@ const updateProfile = async (req, res) => {
     if (username) user.username = username;
     if (city) user.city = city;
     if (country) user.country = country;
-    if (avatar) user.avatar = avatar;
+    if (avatar !== undefined) user.avatar = avatar;
+    if (typeof isBusinessMode === 'boolean') user.isBusinessMode = isBusinessMode;
     
     await user.save();
     
     res.json({
       success: true,
       message: 'Profile updated successfully',
-      data: {
+      user: {
         id: user._id,
         username: user.username,
         email: user.email,
         phoneNumber: user.phoneNumber,
         country: user.country,
-        city: user.city
+        city: user.city,
+        avatar: user.avatar,
+        status: user.status,
+        isBusinessMode: user.isBusinessMode
       }
     });
     

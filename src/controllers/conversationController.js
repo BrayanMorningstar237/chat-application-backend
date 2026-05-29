@@ -3,15 +3,72 @@ const Conversation = require('../models/Conversation');
 const User = require('../models/User');
 const Message = require('../models/Message'); // ADD THIS - needed for unread count
 
-// Create a direct conversation between two users
-const createDirectConversation = async (req, res) => {
+// Create a direct or group conversation
+const createConversation = async (req, res) => {
   try {
-    const { targetUserId } = req.body;
     const currentUserId = req.user.id;
+    const { type, targetUserId, participantIds = [], groupInfo } = req.body;
 
-    console.log('Creating conversation between:', currentUserId, 'and', targetUserId);
+    if (type === 'group') {
+      const participants = Array.isArray(participantIds)
+        ? [...new Set(participantIds.map(String))]
+        : [];
 
-    // Validate target user exists
+      if (participants.length < 2) {
+        return res.status(400).json({
+          success: false,
+          error: 'Group conversations need at least two participants besides you'
+        });
+      }
+
+      if (!groupInfo || !groupInfo.name) {
+        return res.status(400).json({
+          success: false,
+          error: 'Group name is required'
+        });
+      }
+
+      const users = await User.find({ _id: { $in: participants } });
+      if (users.length !== participants.length) {
+        return res.status(404).json({
+          success: false,
+          error: 'One or more group participants not found'
+        });
+      }
+
+      const conversation = new Conversation({
+        type: 'group',
+        participants: [
+          { userId: currentUserId, joinedAt: new Date() },
+          ...participants.map((participantId) => ({ userId: participantId, joinedAt: new Date() }))
+        ],
+        groupInfo: {
+          name: groupInfo.name,
+          description: groupInfo.description || '',
+          avatar: groupInfo.avatar || null,
+          createdBy: currentUserId,
+          createdAt: new Date()
+        }
+      });
+
+      await conversation.save();
+      const populatedConversation = await Conversation.findById(conversation._id)
+        .populate('participants.userId', 'username avatar status');
+
+      return res.status(201).json({
+        success: true,
+        data: populatedConversation,
+        message: 'Group created successfully'
+      });
+    }
+
+    if (type !== 'direct' && !targetUserId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid conversation type or missing target user'
+      });
+    }
+
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return res.status(404).json({
@@ -20,7 +77,6 @@ const createDirectConversation = async (req, res) => {
       });
     }
 
-    // Check if conversation already exists
     const existingConversation = await Conversation.findOne({
       type: 'direct',
       participants: {
@@ -39,7 +95,6 @@ const createDirectConversation = async (req, res) => {
       });
     }
 
-    // Create new conversation
     const conversation = new Conversation({
       type: 'direct',
       participants: [
@@ -49,8 +104,6 @@ const createDirectConversation = async (req, res) => {
     });
 
     await conversation.save();
-
-    // Populate the conversation before returning
     const populatedConversation = await Conversation.findById(conversation._id)
       .populate('participants.userId', 'username avatar status');
 
@@ -66,6 +119,49 @@ const createDirectConversation = async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+};
+
+const updateConversation = async (req, res) => {
+  try {
+    const conversationId = req.params.id;
+    const { name, description, avatar } = req.body;
+    const requesterId = req.user.id;
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+
+    const isParticipant = conversation.participants.some(
+      (p) => p.userId.toString() === requesterId
+    );
+
+    if (!isParticipant) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    if (conversation.type !== 'group') {
+      return res.status(400).json({ success: false, error: 'Only group conversations can be updated' });
+    }
+
+    const isGroupAdmin = conversation.groupInfo?.createdBy?.toString() === requesterId || req.user.isAdmin;
+    if (!isGroupAdmin) {
+      return res.status(403).json({ success: false, error: 'Only group admins can update group details' });
+    }
+
+    if (name) conversation.groupInfo.name = name;
+    if (description !== undefined) conversation.groupInfo.description = description;
+    if (avatar !== undefined) conversation.groupInfo.avatar = avatar;
+
+    await conversation.save();
+    const updatedConversation = await Conversation.findById(conversation._id)
+      .populate('participants.userId', 'username avatar status');
+
+    res.json({ success: true, data: updatedConversation, message: 'Group updated successfully' });
+  } catch (error) {
+    console.error('Update conversation error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -157,7 +253,9 @@ const getConversationById = async (req, res) => {
 };
 
 module.exports = {
-  createDirectConversation,
+  createDirectConversation: createConversation,
+  createConversation,
+  updateConversation,
   getUserConversations,
   getConversationById
 };
