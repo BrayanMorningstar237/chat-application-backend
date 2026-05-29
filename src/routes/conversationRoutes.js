@@ -3,6 +3,8 @@ const express = require('express');
 const router = express.Router();
 const {
   createDirectConversation,
+  createConversation,
+  updateConversation,
   getUserConversations,
   getConversationById
 } = require('../controllers/conversationController');
